@@ -1,0 +1,6 @@
+{
+  "name": "Brieftly",
+  "description": "An AI-powered IT helpdesk and crowdsourced knowledge base for macOS, Windows, and Linux.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": []
+}

@@ -1,0 +1,82 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == "sigitsda71@gmail.com" && request.auth.token.email_verified == true
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Solutions: Publicly readable, admin or system-verified updates
+    match /solutions/{solutionId} {
+      allow read: if true;
+      
+      function isValidSolution(data) {
+        return data.problemSummary is string && data.problemSummary.size() <= 1000
+          && data.os in ['macos', 'windows', 'linux', 'android', 'ios']
+          && data.steps is list && data.steps.size() <= 50
+          && (data.validatedCount is int || data.validatedCount == null);
+      }
+
+      allow create: if isValidSolution(request.resource.data);
+      allow update: if isValidSolution(request.resource.data) && (
+        // Allow updating validation count
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['validatedCount', 'updatedAt']))
+        || isAdmin()
+      );
+      allow delete: if isAdmin();
+
+      match /feedbacks/{feedbackId} {
+        function isValidFeedback(data) {
+          return data.solutionId is string && data.solutionId.size() <= 128
+            && data.feedbackType in ['worked', 'confusing', 'outdated', 'failed']
+            && (!('comments' in data) || (data.comments is string && data.comments.size() <= 1000))
+            && data.createdAt == request.time;
+        }
+
+        // Anyone can create feedback on a solution
+        allow create: if true && isValidFeedback(request.resource.data);
+        allow read: if isAdmin();
+      }
+    }
+
+    // Interactions: History of usage for analytics and admin reporting
+    match /interactions/{interactionId} {
+      function isValidInteraction(data) {
+        return data.query is string && data.query.size() <= 5000
+          && data.detectedOS in ['macos', 'windows', 'linux', 'android', 'ios', 'unknown']
+          && data.status in ['pending', 'solved', 'failed']
+          && (data.userId == null || data.userId is string)
+          && data.createdAt == request.time
+          && (!('intent' in data) || (data.intent is string && data.intent.size() <= 1000))
+          && (!('aiResponse' in data) || (data.aiResponse is string && data.aiResponse.size() <= 10000))
+          && (!('osDetails' in data) || data.osDetails == null || (data.osDetails is string && data.osDetails.size() <= 500))
+          && (!('solutionId' in data) || (data.solutionId == null || (data.solutionId is string && data.solutionId.size() <= 128)))
+          && (!('isDeep' in data) || data.isDeep is bool)
+          && (!('hasImage' in data) || data.hasImage is bool);
+      }
+
+      allow create: if isValidInteraction(request.resource.data);
+      allow read: if isAdmin() || (resource.data.userId != null && isOwner(resource.data.userId));
+      allow update, delete: if isAdmin();
+    }
+  }
+}

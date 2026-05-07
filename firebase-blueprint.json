@@ -1,0 +1,118 @@
+{
+  "entities": {
+    "Feedback": {
+      "title": "Feedback",
+      "description": "User feedback on a solution.",
+      "type": "object",
+      "properties": {
+        "solutionId": {
+          "type": "string"
+        },
+        "feedbackType": {
+          "type": "string",
+          "enum": ["worked", "confusing", "outdated", "failed"]
+        },
+        "comments": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["solutionId", "feedbackType", "createdAt"]
+    },
+    "Solution": {
+      "title": "Solution",
+      "description": "A validated problem-solving sequence for IT issues.",
+      "type": "object",
+      "properties": {
+        "problemSummary": {
+          "type": "string",
+          "description": "A concise summary of the issue."
+        },
+        "os": {
+          "type": "string",
+          "enum": ["macos", "windows", "linux"],
+          "description": "The operating system this solution applies to."
+        },
+        "steps": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Step-by-step instructions to solve the problem."
+        },
+        "category": {
+          "type": "string",
+          "description": "e.g., Terminal, UI, Configuration"
+        },
+        "validatedCount": {
+          "type": "integer",
+          "description": "How many times this solution has been confirmed as working."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["problemSummary", "os", "steps"]
+    },
+    "Interaction": {
+      "title": "Interaction",
+      "description": "A user request for help and the system's response.",
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "The user's original input string."
+        },
+        "detectedOS": {
+          "type": "string",
+          "enum": ["macos", "windows", "linux", "unknown"]
+        },
+        "intent": {
+          "type": "string",
+          "description": "The parsed intent from the query."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "solved", "failed"]
+        },
+        "solutionId": {
+          "type": "string",
+          "description": "Reference to a Solution document if found in KB."
+        },
+        "aiResponse": {
+          "type": "string",
+          "description": "The raw or formatted AI response if no KB match was found."
+        },
+        "userId": {
+          "type": "string",
+          "description": "UID of the user (if authenticated)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["query", "detectedOS", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "solutions": {
+      "schema": "Solution",
+      "description": "Global knowledge base of IT solutions."
+    },
+    "solutions/{solutionId}/feedbacks": {
+      "schema": "Feedback",
+      "description": "Feedback provided for a specific solution."
+    },
+    "interactions": {
+      "schema": "Interaction",
+      "description": "History of user interactions and problem detection."
+    }
+  }
+}
