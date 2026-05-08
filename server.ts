@@ -10,6 +10,10 @@ const __dirname = path.dirname(__filename);
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY as string });
 
+const configTools: any[] = [
+  { googleSearch: {} }
+];
+
 const callOpenRouter = async (model: string, systemPrompt: string, userMessage: any, responseFormat?: string) => {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error("OpenRouter API Key is missing");
@@ -185,6 +189,12 @@ Strict Guardrails:
          Severity: ${parsed.severity}
          Existing KB Solution Steps (${kbReference.problemSummary}):
          ${kbReference.steps.map((s: string, i: number) => `${i+1}. ${s}`).join('\n')}
+
+         ${kbReference.recentFeedbacks && kbReference.recentFeedbacks.length > 0 ? `
+         CRITICAL - User Feedback to Address:
+         The following parts of the existing solution were reported as confusing or incorrect:
+         - ${kbReference.recentFeedbacks.join('\n         - ')}
+         PLEASE REWRITE THE STEPS TO FIX THESE SPECIFIC COMPLAINTS.` : ''}
          Task: 
          - Tailor the KB steps specifically to the user's 'Context' and logs using strictly simple, non-technical language.
          - Make the steps more precise based on the context (e.g., specific error codes, app names).

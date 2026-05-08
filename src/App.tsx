@@ -7,7 +7,7 @@ import { findKBMatch, submitFeedback, getAllSolutions, getInteractionsReport } f
 import { getDetailedOS } from './lib/osDetector';
 import { cn } from './lib/utils';
 import { collection, addDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { db, auth, signInWithGoogle } from './lib/firebase';
+import { db, auth, signInWithGoogle, handleFirestoreError, OperationType } from './lib/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 
 import { CommandRunner } from './components/CommandRunner';
@@ -279,7 +279,7 @@ export default function App() {
              userId: auth.currentUser?.uid || null
            });
          } catch (e) {
-           console.error("Async log failed", e);
+           handleFirestoreError(e, OperationType.WRITE, 'interactions');
          }
          return;
       }
@@ -290,14 +290,9 @@ export default function App() {
         existingSolution = await findKBMatch(parsedInfo.intent, parsedInfo.os);
       }
 
-      // 3. Generate AI Solution OR Serve KB Directly
-      let finalSolution = existingSolution;
-      
-      if (!existingSolution) {
-        // Only generate from AI if we don't have a direct KB match
-        const aiSolution = await generateSolution(parsedInfo, isDeep, undefined, logText || undefined, imageBase64 || undefined);
-        finalSolution = { ...aiSolution, intent: parsedInfo.intent };
-      }
+      // 3. Generate AI Solution (Refining KB match if exists)
+      const aiSolution = await generateSolution(parsedInfo, isDeep, existingSolution, logText || undefined, imageBase64 || undefined);
+      const finalSolution = { ...aiSolution, intent: parsedInfo.intent };
       
       setSolution(finalSolution);
       setKbId(existingSolution ? existingSolution.id : null);
@@ -306,7 +301,7 @@ export default function App() {
       
       // 4. Log successful interaction
       try {
-        await addDoc(collection(db, 'interactions'), {
+        const docRef = await addDoc(collection(db, 'interactions'), {
           query: parsedInfo.context || query,
           detectedOS: finalSolution.os || parsedInfo.os || userOS,
           osDetails: osDetails || null,
@@ -319,8 +314,10 @@ export default function App() {
           createdAt: serverTimestamp(),
           userId: auth.currentUser?.uid || null
         });
+        console.log(`[Firestore] Interaction logged successfully to database: ${db.app.options.projectId}/${(db as any).databaseId || '(default)'}`);
+        console.log(`[Firestore] Document ID: ${docRef.id}`);
       } catch (e) {
-        console.error("Async log failed", e);
+        handleFirestoreError(e, OperationType.WRITE, 'interactions');
       }
     } catch (error) {
       console.error("Troubleshooting failed", error);
@@ -347,6 +344,8 @@ export default function App() {
         }
         setHasValidated(true);
         setFeedbackView('none');
+        setFeedbackComments('');
+        setFeedbackType(null);
       } catch (error) {
         console.error("Feedback submission failed, but updating UI anyway.", error);
         // Force the UI to proceed so it doesn't look like the button is broken

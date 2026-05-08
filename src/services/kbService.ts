@@ -19,12 +19,17 @@ export const findKBMatch = async (intent: string, os: string) => {
     const q = query(
       collection(db, path),
       where('os', '==', os),
-      limit(50)
+      limit(500)
     );
     const snapshot = await getDocs(q);
-    const results = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const results = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
     
-    console.log(`[KB Search] Checking ${results.length} solutions for intent: "${intent}"`);
+    if (results.length > 0) {
+      const osTags = Array.from(new Set(results.map(r => r.os)));
+      console.log(`[KB Search] Found ${results.length} solutions for ${os.toUpperCase()}. Unique OS tags in results: ${osTags.join(', ')}`);
+    }
+    
+    console.log(`[KB Search] Checking ${results.length} solutions for ${os.toUpperCase()} matching intent: "${intent}"`);
     
     // Generate Vector Embedding for the search intent
     const queryEmbedding = await generateEmbedding(intent);
@@ -67,7 +72,18 @@ export const findKBMatch = async (intent: string, os: string) => {
     });
 
     if (match) {
-      console.log(`[KB Search] Found keyword match fallback: ${match.problemSummary}`);
+      console.log(`[KB Search] Found match: ${match.problemSummary}`);
+      // Fetch recent feedbacks for this solution to help AI refinement
+      try {
+        const fbSnap = await getDocs(query(
+          collection(db, `solutions/${match.id}/feedbacks`),
+          orderBy('createdAt', 'desc'),
+          limit(3)
+        ));
+        (match as any).recentFeedbacks = fbSnap.docs.map(d => d.data().comments).filter(Boolean);
+      } catch (e) {
+        console.warn("[KB Search] Could not fetch feedbacks for solution", e);
+      }
     } else {
       console.log(`[KB Search] No match found.`);
     }
@@ -92,6 +108,7 @@ export const validateSolution = async (solutionId: string | null, solutionData: 
       // Create new KB entry if it worked! (The Flywheel)
       const data: any = {
         ...solutionData,
+        os: solutionData.os.toLowerCase(), // Force consistency
         validatedCount: 1,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
@@ -127,6 +144,7 @@ export const submitFeedback = async (
 
       const data: any = {
         ...solutionData,
+        os: solutionData.os.toLowerCase(), // Force consistency
         embedding: embedding || null, // Store vector natively!
         validatedCount: feedbackType === 'worked' ? 1 : 0,
         createdAt: serverTimestamp(),
@@ -137,8 +155,14 @@ export const submitFeedback = async (
         data.authorName = user.displayName;
         data.authorPhoto = user.photoURL;
       }
-      const newSol = await addDoc(collection(db, 'solutions'), data);
-      currentId = newSol.id;
+      // GUARD: Do not save "Not OS Related" or generic error messages to the Knowledge Base
+      if (solutionData.problemSummary.includes("Not OS Related")) {
+        console.warn("[Firestore] Skipping KB promotion for non-OS related issue.");
+      } else {
+        const newSol = await addDoc(collection(db, 'solutions'), data);
+        currentId = newSol.id;
+        console.log(`[Firestore] New AI Solution promoted to KB with ID: ${currentId}`);
+      }
     } else if (currentId && feedbackType === 'worked') {
       // Increment if it worked
       await updateDoc(doc(db, 'solutions', currentId), {
@@ -159,11 +183,12 @@ export const submitFeedback = async (
       }
       if (comments) fbData.comments = comments;
       await addDoc(collection(db, `solutions/${currentId}/feedbacks`), fbData);
+      console.log(`[Firestore] Feedback logged successfully to: solutions/${currentId}/feedbacks`);
     }
     
     return currentId || undefined;
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, 'solutions/feedbacks');
+    handleFirestoreError(error, OperationType.WRITE, `solutions/feedbacks`);
   }
 };
 
