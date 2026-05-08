@@ -249,7 +249,7 @@ export default function App() {
 
     try {
       // 1. Parse Issue with platform hint
-      const parsedInfo = await parseUserIssue(query, osDetails || userOS, imageBase64 || undefined, logText || undefined);
+      const parsedInfo = await parseUserIssue(query, osDetails || userOS, imageBase64, logText || undefined);
       setParsed(parsedInfo);
 
       if (!parsedInfo.isOSRelated) {
@@ -295,7 +295,7 @@ export default function App() {
       
       if (!existingSolution) {
         // Only generate from AI if we don't have a direct KB match
-        const aiSolution = await generateSolution(parsedInfo, isDeep, undefined, logText || undefined);
+        const aiSolution = await generateSolution(parsedInfo, isDeep, undefined, logText || undefined, imageBase64 || undefined);
         finalSolution = { ...aiSolution, intent: parsedInfo.intent };
       }
       
@@ -384,14 +384,35 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#FDFDFD] text-[#1A1A1A] font-sans selection:bg-blue-100 selection:text-blue-900">
+    <div className="min-h-screen bg-[#FDFDFD] text-[#1A1A1A] font-sans selection:bg-blue-100 selection:text-blue-900 flex flex-col">
+      {/* Navigation Header */}
+      <nav className="fixed top-0 inset-x-0 z-50 bg-white/80 backdrop-blur-md border-b border-gray-100 px-6 py-4">
+        <div className="max-w-5xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-2 cursor-pointer" onClick={reset}>
+            <img src="/emblem.svg" alt="Brieftly" className="w-8 h-8" />
+            <span className="font-bold text-xl tracking-tight">Brieftly</span>
+          </div>
+          <div className="flex items-center gap-4">
+            {user && (
+              <div className="flex items-center gap-3">
+                <div className="text-right hidden sm:block">
+                   <p className="text-xs font-bold text-gray-900 leading-none">{user.displayName}</p>
+                   <p className="text-[10px] text-gray-500 mt-0.5">{user.email}</p>
+                </div>
+                <img src={user.photoURL || ''} alt="" className="w-8 h-8 rounded-full border border-gray-200" />
+              </div>
+            )}
+          </div>
+        </div>
+      </nav>
+
       {/* Background decoration */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] bg-blue-50/50 rounded-full blur-[120px]" />
         <div className="absolute -bottom-[10%] -right-[10%] w-[30%] h-[30%] bg-indigo-50/50 rounded-full blur-[100px]" />
       </div>
 
-      <main className="relative z-10 max-w-5xl mx-auto px-6 py-20 lg:py-32">
+      <main className="relative z-10 max-w-5xl mx-auto px-6 pt-24 pb-4 flex-1 flex flex-col">
         <AnimatePresence mode="wait">
           {stage === 'search' && (
             <motion.div
@@ -400,19 +421,9 @@ export default function App() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
               transition={{ duration: 0.4 }}
-              className="space-y-12"
+              className="flex-1 flex flex-col items-center justify-center space-y-12"
             >
               <div className="text-center space-y-4">
-                <motion.div 
-                  initial={{ scale: 0.9 }}
-                  animate={{ scale: 1 }}
-                  className="inline-flex p-3 bg-white border border-gray-100 rounded-2xl shadow-sm mb-4"
-                >
-                  <Monitor className="w-8 h-8 text-blue-600" />
-                </motion.div>
-                <h1 className="text-4xl md:text-5xl font-medium tracking-tight text-gray-900">
-                  Brieftly
-                </h1>
                 <p className="text-lg text-gray-500 max-w-md mx-auto leading-relaxed">
                   Fix a problem or learn how to use your system. 
                   macOS, Windows, or Linux.
@@ -848,21 +859,48 @@ export default function App() {
                       <h4 className="text-sm font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2 mb-4">
                         <Link className="w-4 h-4" /> Sources & References
                       </h4>
-                      <ul className="space-y-2">
-                        {solution.sources.map((source, idx) => (
-                          <li key={idx} className="flex items-start gap-2">
-                            <span className="text-blue-500 mt-1">•</span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {solution.sources.map((source, idx) => {
+                          let domain = "Reference";
+                          let isVerified = false;
+                          try {
+                            const url = new URL(source);
+                            domain = url.hostname.replace('www.', '');
+                            const verifiedDomains = ['apple.com', 'microsoft.com', 'google.com', 'ubuntu.com', 'linux.org', 'android.com', 'help.apple.com'];
+                            isVerified = verifiedDomains.some(v => domain.endsWith(v));
+                          } catch (e) {}
+
+                          return (
                             <a 
+                              key={idx}
                               href={source} 
                               target="_blank" 
                               rel="noopener noreferrer" 
-                              className="text-sm text-blue-600 hover:text-blue-800 hover:underline break-all"
+                              className="group flex items-center gap-3 p-3 bg-gray-50 border border-gray-100 rounded-xl hover:border-blue-200 hover:bg-white hover:shadow-md transition-all active:scale-[0.98]"
                             >
-                              {source}
+                              <div className="w-10 h-10 flex-none bg-white border border-gray-100 group-hover:border-blue-100 rounded-lg flex items-center justify-center transition-colors shadow-sm">
+                                <Info className="w-5 h-5 text-gray-400 group-hover:text-blue-600 transition-colors" />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5 mb-0.5">
+                                  <span className="text-[10px] font-bold text-gray-400 group-hover:text-gray-900 uppercase tracking-widest truncate transition-colors">
+                                    {domain}
+                                  </span>
+                                  {isVerified && (
+                                    <div className="flex items-center gap-0.5 bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded-full text-[9px] font-bold border border-blue-100">
+                                      <CheckCircle2 className="w-2.5 h-2.5" />
+                                      <span>OFFICIAL</span>
+                                    </div>
+                                  )}
+                                </div>
+                                <p className="text-[11px] text-gray-500 truncate group-hover:text-blue-600 transition-colors">
+                                  {source}
+                                </p>
+                              </div>
                             </a>
-                          </li>
-                        ))}
-                      </ul>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1313,7 +1351,7 @@ export default function App() {
         </AnimatePresence>
       </main>
 
-      <footer className="relative z-10 py-12 border-t border-gray-100 mt-auto">
+      <footer className="relative z-10 py-8 border-t border-gray-100 mt-auto">
         <div className="max-w-5xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-6 text-sm text-gray-400">
           <div className="flex flex-col gap-1 items-center md:items-start">
             <div className="flex items-center gap-2">

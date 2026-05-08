@@ -76,10 +76,18 @@ async function startServer() {
          - 'how-to' for learning how to access settings, tools, or perform general tasks.
       4. Extract the 'intent' (e.g., 'terminal access', 'driver update') and 'context'. IF an image or logs are provided, extract context from them. 
       5. CRITICAL PRIVACY PRECAUTION: You MUST rigorously scrub any Personally Identifiable Information (PII) from the extracted 'intent' and 'context'. Replace any found email, name, person address, gender, race, or phone number with a generic placeholder (e.g., [REDACTED EMAIL], [REDACTED NAME]). Never store sensitive data.
-    `);
+    `);    if (imageBase64) {
+      const match = imageBase64.match(/^data:(image\/[a-zA-Z]+);base64,(.*)$/);
+      if (match) {
+        console.log(`[AI Server] Image attachment detected (${match[1]})`);
+        contents.push({ inlineData: { mimeType: match[1], data: match[2] } });
+      } else {
+        console.warn(`[AI Server] Image provided but failed regex match. Length: ${imageBase64.length}`);
+      }
+    }
 
     try {
-      const modelName = process.env.GEMINI_MODEL_STANDARD || "gemini-3-flash-preview";
+      const modelName = process.env.GEMINI_MODEL_STANDARD!;
       console.log(`[AI Server] Attempting Gemini (${modelName})...`);
       const response = await ai.models.generateContent({
         model: modelName,
@@ -107,10 +115,14 @@ async function startServer() {
     } catch (e: any) {
       console.warn(`[AI Server] Gemini failed: ${e.message}`);
       
-      const openRouterModel = process.env.OPENROUTER_MODEL_STANDARD || "anthropic/claude-3-haiku";
+      const hasImage = !!(imageBase64 && imageBase64.length > 20);
+      const openRouterModel = hasImage ? process.env.OPENROUTER_MODEL_OCR! : process.env.OPENROUTER_MODEL_STANDARD!;
+      
+      console.log(`[AI Server] Fallback decision - hasImage: ${hasImage}, using model: ${openRouterModel}`);
+
       const systemPrompt = `You must output strictly valid JSON matching this schema: 
-{ "isOSRelated": boolean, "os": "macos" | "windows" | "linux" | "android" | "ios" | "unknown", "queryType": "troubleshoot" | "how-to", "intent": "string", "context": "string", "severity": "low" | "medium" | "high" }
-Return ONLY JSON without markdown wrapping.`;
+ { "isOSRelated": boolean, "os": "macos" | "windows" | "linux" | "android" | "ios" | "unknown", "queryType": "troubleshoot" | "how-to", "intent": "string", "context": "string", "severity": "low" | "medium" | "high" }
+ Return ONLY JSON without markdown wrapping.`;
       
       let userMessageContent: any[] = [{ type: "text", text: contents[contents.length - 1] as string }];
       if (imageBase64) {
@@ -119,7 +131,9 @@ Return ONLY JSON without markdown wrapping.`;
 
       try {
         const orResponse = await callOpenRouter(openRouterModel, systemPrompt, userMessageContent, "json_object");
-        const cleanJson = orResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+        // Robustly extract JSON object if the model was chatty or used markdown
+        const jsonMatch = orResponse.match(/\{[\s\S]*\}/);
+        const cleanJson = (jsonMatch ? jsonMatch[0] : orResponse).trim();
         res.json(JSON.parse(cleanJson));
       } catch (orError: any) {
         console.error(`[AI Server] OpenRouter fallback failed: ${orError.message}`);
@@ -130,9 +144,17 @@ Return ONLY JSON without markdown wrapping.`;
 
   app.post("/api/ai/generate", async (req, res) => {
     console.log(`\n[AI Server] --- New Solution Generation Request ---`);
-    const { parsed, isDeep, kbReference, logsText } = req.body;
+    const { parsed, isDeep, kbReference, logsText, imageBase64 } = req.body;
     
     console.log(`[AI Server] Deep Mode: ${isDeep}, Target OS: ${parsed.os}`);
+
+    const contents: any[] = [];
+    if (imageBase64) {
+      const match = imageBase64.match(/^data:(image\/[a-zA-Z]+);base64,(.*)$/);
+      if (match) {
+        contents.push({ inlineData: { mimeType: match[1], data: match[2] } });
+      }
+    }
 
     const basePersona = `You are the core AI Support Concierge for "Brieftly," a frictionless, public-facing IT platform.
 Your Scope: Strictly handle device troubleshooting, OS-level configurations, and instructional "how-to" queries exclusively for macOS, Windows, Linux, Android, and iOS.
@@ -193,15 +215,16 @@ Strict Guardrails:
     }
 
     const modelName = isDeep 
-      ? (process.env.GEMINI_MODEL_DEEP || "gemini-3.1-pro-preview") 
-      : (process.env.GEMINI_MODEL_STANDARD || "gemini-3-flash-preview");
-    const configTools = !kbReference ? [{ googleSearch: {} }] : undefined;
+      ? process.env.GEMINI_MODEL_DEEP! 
+      : process.env.GEMINI_MODEL_STANDARD!;
+    
+    contents.push(prompt);
 
     try {
       console.log(`[AI Server] Attempting Gemini (${modelName})...`);
       const response = await ai.models.generateContent({
         model: modelName,
-        contents: prompt,
+        contents: contents,
         config: {
           tools: configTools,
           responseMimeType: "application/json",
@@ -229,19 +252,31 @@ Strict Guardrails:
     } catch (error: any) {
       console.warn(`[AI Server] Gemini failed: ${error.message}`);
       
-      const openRouterModel = isDeep 
-        ? (process.env.OPENROUTER_MODEL_DEEP || "anthropic/claude-3.5-sonnet")
-        : (process.env.OPENROUTER_MODEL_STANDARD || "anthropic/claude-3-haiku");
-        
+      const hasImage = !!(imageBase64 && imageBase64.length > 20);
+      const openRouterModel = hasImage 
+        ? process.env.OPENROUTER_MODEL_OCR! 
+        : (isDeep ? process.env.OPENROUTER_MODEL_DEEP! : process.env.OPENROUTER_MODEL_STANDARD!);
+      
+      if (hasImage) {
+        console.log(`[AI Server] Image detected in generation fallback, using OCR model: ${openRouterModel}`);
+      }
+
       const systemPrompt = `You must output strictly valid JSON. Return ONLY JSON without markdown wrapping. ${
         isDeep 
           ? 'Schema: { "problemSummary": "string", "os": "string", "steps": ["string"], "explanation": "string", "sources": ["string"] }' 
           : 'Schema: { "problemSummary": "string", "os": "string", "steps": ["string"], "sources": ["string"] }'
       }\n\n${prompt}`;
       
+      let userMessageContent: any[] = [{ type: "text", text: "Proceed with the instructions." }];
+      if (imageBase64) {
+        userMessageContent.push({ type: "image_url", image_url: { url: imageBase64 } });
+      }
+
       try {
-        const orResponse = await callOpenRouter(openRouterModel, systemPrompt, "Proceed with the instructions.", "json_object");
-        const cleanJson = orResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+        const orResponse = await callOpenRouter(openRouterModel, systemPrompt, userMessageContent, "json_object");
+        // Robustly extract JSON object if the model was chatty or used markdown
+        const jsonMatch = orResponse.match(/\{[\s\S]*\}/);
+        const cleanJson = (jsonMatch ? jsonMatch[0] : orResponse).trim();
         res.json(JSON.parse(cleanJson));
       } catch (orError: any) {
         console.error(`[AI Server] OpenRouter fallback failed: ${orError.message}`);
@@ -263,13 +298,13 @@ Strict Guardrails:
       
       let response;
       try {
-        const primaryEmbedModel = process.env.GEMINI_MODEL_EMBEDDING || 'text-embedding-004';
+        const primaryEmbedModel = process.env.GEMINI_MODEL_EMBEDDING!;
         response = await ai.models.embedContent({
           model: primaryEmbedModel,
           contents: text,
         });
       } catch (err: any) {
-        const fallbackEmbedModel = process.env.GEMINI_MODEL_EMBEDDING_FALLBACK || 'gemini-embedding-001';
+        const fallbackEmbedModel = process.env.GEMINI_MODEL_EMBEDDING_FALLBACK!;
         console.warn(`[AI Server] Primary embedding failed, trying ${fallbackEmbedModel}`);
         response = await ai.models.embedContent({
           model: fallbackEmbedModel,

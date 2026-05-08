@@ -29,11 +29,11 @@ export const parseUserIssue = async (query: string, clientHint?: string, imageBa
   return res.json();
 };
 
-export const generateSolution = async (parsed: ParsedIssue, isDeep: boolean = false, kbReference: any = null, logsText?: string): Promise<AISolution> => {
+export const generateSolution = async (parsed: ParsedIssue, isDeep: boolean = false, kbReference: any = null, logsText?: string, imageBase64?: string): Promise<AISolution> => {
   const res = await fetch("/api/ai/generate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ parsed, isDeep, kbReference, logsText })
+    body: JSON.stringify({ parsed, isDeep, kbReference, logsText, imageBase64 })
   });
 
   if (!res.ok) {
