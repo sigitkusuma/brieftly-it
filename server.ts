@@ -342,7 +342,8 @@ Strict Guardrails:
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    const distPath = path.resolve(__dirname, "dist");
+    console.log(`[Production] Current Working Directory: ${process.cwd()}`);
     console.log(`[Production] Serving static files from: ${distPath}`);
     
     // Diagnostic: List files in dist to see what's actually there
@@ -352,6 +353,8 @@ Strict Guardrails:
         console.log(`[Production] Files found in dist: ${JSON.stringify(files)}`);
       } else {
         console.error(`[Production] ERROR: dist folder does NOT exist at ${distPath}`);
+        // Try to see if it's in the parent or a sibling
+        console.log(`[Production] Root Scan: ${JSON.stringify(fs.readdirSync(__dirname))}`);
       }
     });
 
