@@ -55,10 +55,15 @@ export default function App() {
   const [loadingIndex, setLoadingIndex] = useState(0);
   const loadingMessages = [
     "Identifying Issue...",
-    "Scanning error codes...",
-    "Cross-referencing database...",
-    "Generating simple steps...",
-    "Formulating solution..."
+    "Scanning system patterns...",
+    "Cross-referencing Knowledge Base...",
+    "Analyzing visual clues...",
+    "Consulting technical manuals...",
+    "Optimizing troubleshooting path...",
+    "Scrubbing sensitive data...",
+    "Generating step-by-step guide...",
+    "Simplifying technical jargon...",
+    "Verifying solution safety..."
   ];
 
   useEffect(() => {
@@ -314,8 +319,6 @@ export default function App() {
           createdAt: serverTimestamp(),
           userId: auth.currentUser?.uid || null
         });
-        console.log(`[Firestore] Interaction logged successfully to database: ${db.app.options.projectId}/${(db as any).databaseId || '(default)'}`);
-        console.log(`[Firestore] Document ID: ${docRef.id}`);
       } catch (e) {
         handleFirestoreError(e, OperationType.WRITE, 'interactions');
       }
@@ -749,7 +752,7 @@ export default function App() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="flex flex-col items-center justify-center py-20 space-y-8"
+              className="flex-grow flex flex-col items-center justify-center min-h-[50vh] space-y-8"
             >
               <div className="relative">
                 <div className="w-20 h-20 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin" />

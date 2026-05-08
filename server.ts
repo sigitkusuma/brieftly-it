@@ -57,7 +57,7 @@ async function startServer() {
   app.post("/api/ai/parse", async (req, res) => {
     console.log(`\n[AI Server] --- New Issue Parsing Request ---`);
     const { query, clientHint, imageBase64, logsText } = req.body;
-    
+
     const contents: any[] = [];
     if (imageBase64) {
       const match = imageBase64.match(/^data:(image\/[a-zA-Z]+);base64,(.*)$/);
@@ -69,28 +69,25 @@ async function startServer() {
 
     contents.push(`
       Analyze this IT request: "${query}"
-      User's current platform: ${clientHint || "unknown"}
+      User's current platform hint: ${clientHint || "unknown"}
       ${logsText ? `Provided System Logs: ${logsText}\n` : ""}
       
       Tasks:
-      1. Determine if the request (and image or logs, if provided) is OS system related (e.g., related to computers, devices, software issues). Determine this and set 'isOSRelated' boolean.
-      2. Determine the TARGET operating system (macos, windows, linux, android, ios). Use the platform hint if ambiguous. Or 'unknown'.
-      3. Classify the 'queryType': 
-         - 'troubleshoot' for errors, bugs, or things not working.
-         - 'how-to' for learning how to access settings, tools, or perform general tasks.
-      4. Extract the 'intent' (e.g., 'terminal access', 'driver update') and 'context'. IF an image or logs are provided, extract context from them. 
-      5. CRITICAL PRIVACY PRECAUTION: You MUST rigorously scrub any Personally Identifiable Information (PII) from the extracted 'intent' and 'context'. Replace any found email, name, person address, gender, race, or phone number with a generic placeholder (e.g., [REDACTED EMAIL], [REDACTED NAME]). Never store sensitive data.
-    `);    if (imageBase64) {
-      const match = imageBase64.match(/^data:(image\/[a-zA-Z]+);base64,(.*)$/);
-      if (match) {
-        console.log(`[AI Server] Image attachment detected (${match[1]})`);
-        contents.push({ inlineData: { mimeType: match[1], data: match[2] } });
-      } else {
-        console.warn(`[AI Server] Image provided but failed regex match. Length: ${imageBase64.length}`);
-      }
-    }
-
+      1. Determine if the request (and image/logs) is OS system related. Set 'isOSRelated'.
+      2. Determine the TARGET operating system (macos, windows, linux, android, ios). 
+         CRITICAL: If an image is provided, INSPECT IT for visual clues (window styles, taskbars, icons, font styles) to determine the OS. Visual evidence from the image SHOULD OVERRIDE the platform hint if they differ.
+      3. Classify 'queryType' (troubleshoot or how-to).
+      4. Extract 'intent' and 'context'. 
+      5. SCRUB ALL PII (emails, names, addresses) from 'intent' and 'context'.
+    `);
     try {
+      const hasImage = !!(imageBase64 && imageBase64.length > 20);
+      const forceOCR = hasImage && process.env.PRIORITIZE_OPENROUTER_OCR === 'true';
+      
+      if (forceOCR) {
+        throw new Error("FORCE_OCR_FALLBACK");
+      }
+
       const modelName = process.env.GEMINI_MODEL_STANDARD!;
       console.log(`[AI Server] Attempting Gemini (${modelName})...`);
       const response = await ai.models.generateContent({
@@ -117,17 +114,21 @@ async function startServer() {
       console.log(`[AI Server] Gemini parsing successful`);
       res.json(JSON.parse(response.text.trim()));
     } catch (e: any) {
-      console.warn(`[AI Server] Gemini failed: ${e.message}`);
-      
+      if (e.message !== "FORCE_OCR_FALLBACK") {
+        console.warn(`[AI Server] Gemini failed: ${e.message}`);
+      } else {
+        console.log(`[AI Server] Forced OCR detected, skipping Gemini...`);
+      }
+
       const hasImage = !!(imageBase64 && imageBase64.length > 20);
       const openRouterModel = hasImage ? process.env.OPENROUTER_MODEL_OCR! : process.env.OPENROUTER_MODEL_STANDARD!;
-      
+
       console.log(`[AI Server] Fallback decision - hasImage: ${hasImage}, using model: ${openRouterModel}`);
 
       const systemPrompt = `You must output strictly valid JSON matching this schema: 
  { "isOSRelated": boolean, "os": "macos" | "windows" | "linux" | "android" | "ios" | "unknown", "queryType": "troubleshoot" | "how-to", "intent": "string", "context": "string", "severity": "low" | "medium" | "high" }
  Return ONLY JSON without markdown wrapping.`;
-      
+
       let userMessageContent: any[] = [{ type: "text", text: contents[contents.length - 1] as string }];
       if (imageBase64) {
         userMessageContent.push({ type: "image_url", image_url: { url: imageBase64 } });
@@ -149,7 +150,7 @@ async function startServer() {
   app.post("/api/ai/generate", async (req, res) => {
     console.log(`\n[AI Server] --- New Solution Generation Request ---`);
     const { parsed, isDeep, kbReference, logsText, imageBase64 } = req.body;
-    
+
     console.log(`[AI Server] Deep Mode: ${isDeep}, Target OS: ${parsed.os}`);
 
     const contents: any[] = [];
@@ -188,7 +189,7 @@ Strict Guardrails:
          Specific Context: ${parsed.context}${logsContext}
          Severity: ${parsed.severity}
          Existing KB Solution Steps (${kbReference.problemSummary}):
-         ${kbReference.steps.map((s: string, i: number) => `${i+1}. ${s}`).join('\n')}
+         ${kbReference.steps.map((s: string, i: number) => `${i + 1}. ${s}`).join('\n')}
 
          ${kbReference.recentFeedbacks && kbReference.recentFeedbacks.length > 0 ? `
          CRITICAL - User Feedback to Address:
@@ -202,7 +203,7 @@ Strict Guardrails:
          - ${isDeep ? "Explain in detail why the proposed solution works and offer deeper insights into the root cause of the problem using the 'explanation' field. Remember to use simple analogies instead of technical terms." : "Keep it concise, actionable, and easy to understand for beginners."}
          Format the 'problemSummary' as a clean title. Provide actionable 'steps' as an array of strings. Include URLs to any relevant official documentation in the 'sources' array.`;
     } else {
-      prompt = isDeep 
+      prompt = isDeep
         ? `${basePersona}\n\nPerform a deep analysis and provide a comprehensive guide for this ${parsed.queryType} request on ${parsed.os.toUpperCase()}:
            Intent: ${parsed.intent}
            Context: ${parsed.context}${logsContext}
@@ -224,10 +225,10 @@ Strict Guardrails:
            IMPORTANT: For any terminal, command prompt, or powershell commands, wrap them strictly in triple backticks with the correct language (e.g. \`\`\`bash, \`\`\`powershell, \`\`\`cmd). Do not use single backticks for full commands.`;
     }
 
-    const modelName = isDeep 
-      ? process.env.GEMINI_MODEL_DEEP! 
+    const modelName = isDeep
+      ? process.env.GEMINI_MODEL_DEEP!
       : process.env.GEMINI_MODEL_STANDARD!;
-    
+
     contents.push(prompt);
 
     try {
@@ -261,22 +262,21 @@ Strict Guardrails:
       res.json(JSON.parse(response.text.trim()));
     } catch (error: any) {
       console.warn(`[AI Server] Gemini failed: ${error.message}`);
-      
+
       const hasImage = !!(imageBase64 && imageBase64.length > 20);
-      const openRouterModel = hasImage 
-        ? process.env.OPENROUTER_MODEL_OCR! 
+      const openRouterModel = hasImage
+        ? process.env.OPENROUTER_MODEL_OCR!
         : (isDeep ? process.env.OPENROUTER_MODEL_DEEP! : process.env.OPENROUTER_MODEL_STANDARD!);
-      
+
       if (hasImage) {
         console.log(`[AI Server] Image detected in generation fallback, using OCR model: ${openRouterModel}`);
       }
 
-      const systemPrompt = `You must output strictly valid JSON. Return ONLY JSON without markdown wrapping. ${
-        isDeep 
-          ? 'Schema: { "problemSummary": "string", "os": "string", "steps": ["string"], "explanation": "string", "sources": ["string"] }' 
+      const systemPrompt = `You must output strictly valid JSON. Return ONLY JSON without markdown wrapping. ${isDeep
+          ? 'Schema: { "problemSummary": "string", "os": "string", "steps": ["string"], "explanation": "string", "sources": ["string"] }'
           : 'Schema: { "problemSummary": "string", "os": "string", "steps": ["string"], "sources": ["string"] }'
-      }\n\n${prompt}`;
-      
+        }\n\n${prompt}`;
+
       let userMessageContent: any[] = [{ type: "text", text: "Proceed with the instructions." }];
       if (imageBase64) {
         userMessageContent.push({ type: "image_url", image_url: { url: imageBase64 } });
@@ -305,7 +305,7 @@ Strict Guardrails:
     try {
       const { text } = req.body;
       if (!text) return res.status(400).json({ error: "No text provided" });
-      
+
       let response;
       try {
         const primaryEmbedModel = process.env.GEMINI_MODEL_EMBEDDING!;
@@ -345,7 +345,7 @@ Strict Guardrails:
     const distPath = path.resolve(__dirname, "dist");
     console.log(`[Production] Current Working Directory: ${process.cwd()}`);
     console.log(`[Production] Serving static files from: ${distPath}`);
-    
+
     // Diagnostic: List files in dist to see what's actually there
     import("fs").then(fs => {
       if (fs.existsSync(distPath)) {
@@ -360,14 +360,17 @@ Strict Guardrails:
 
     // Serve static files with a fallback to index.html ONLY for non-file requests
     app.use(express.static(distPath));
-    
+
     app.get("*", (req, res) => {
-      // If the request looks like a file (has an extension) or is in /assets, 
-      // but reached here, it means express.static didn't find it.
       // Return 404 instead of index.html to avoid MIME type mismatch errors.
       if (req.path.includes('.') || req.path.startsWith('/assets/')) {
         return res.status(404).send("File not found");
       }
+      
+      // Prevent caching of index.html so users always get the latest asset filenames
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
