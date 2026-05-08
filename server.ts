@@ -345,6 +345,16 @@ Strict Guardrails:
     const distPath = path.join(process.cwd(), "dist");
     console.log(`[Production] Serving static files from: ${distPath}`);
     
+    // Diagnostic: List files in dist to see what's actually there
+    import("fs").then(fs => {
+      if (fs.existsSync(distPath)) {
+        const files = fs.readdirSync(distPath, { recursive: true });
+        console.log(`[Production] Files found in dist: ${JSON.stringify(files)}`);
+      } else {
+        console.error(`[Production] ERROR: dist folder does NOT exist at ${distPath}`);
+      }
+    });
+
     // Serve static files with a fallback to index.html ONLY for non-file requests
     app.use(express.static(distPath));
     

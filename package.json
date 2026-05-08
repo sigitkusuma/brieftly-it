@@ -8,6 +8,7 @@
     "build": "vite build",
     "start": "NODE_ENV=production tsx server.ts",
     "clean": "rm -rf dist",
+    "gcp-build": "npm run build",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
