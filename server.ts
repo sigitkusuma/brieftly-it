@@ -344,8 +344,17 @@ Strict Guardrails:
   } else {
     const distPath = path.join(process.cwd(), "dist");
     console.log(`[Production] Serving static files from: ${distPath}`);
+    
+    // Serve static files with a fallback to index.html ONLY for non-file requests
     app.use(express.static(distPath));
+    
     app.get("*", (req, res) => {
+      // If the request looks like a file (has an extension) or is in /assets, 
+      // but reached here, it means express.static didn't find it.
+      // Return 404 instead of index.html to avoid MIME type mismatch errors.
+      if (req.path.includes('.') || req.path.startsWith('/assets/')) {
+        return res.status(404).send("File not found");
+      }
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
