@@ -4,11 +4,20 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
+import { QdrantClient } from "@qdrant/js-client-rest";
+import { pipeline } from "@xenova/transformers";
+import crypto from "crypto";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY as string });
+
+const qdrantClient = new QdrantClient({
+  url: process.env.QDRANT_URL,
+  apiKey: process.env.QDRANT_API_KEY,
+});
+let embeddingModel: any = null;
 
 const configTools: any[] = [
   { googleSearch: {} }
@@ -52,6 +61,31 @@ async function startServer() {
   const PORT = process.env.PORT || 3001;
 
   app.use(express.json({ limit: '50mb' }));
+
+  // Initialize FastEmbed and Qdrant
+  try {
+    console.log("[AI Server] Initializing Transformers pipeline...");
+    embeddingModel = await pipeline("feature-extraction", "Xenova/multilingual-e5-small");
+    console.log("[AI Server] Transformers pipeline initialized successfully");
+
+    const collectionName = "brieftly_solutions";
+    if (process.env.QDRANT_URL) {
+      try {
+        const collections = await qdrantClient.getCollections();
+        const exists = collections.collections.some(c => c.name === collectionName);
+        if (!exists) {
+          console.log(`[AI Server] Creating Qdrant collection: ${collectionName}`);
+          await qdrantClient.createCollection(collectionName, {
+            vectors: { size: 384, distance: "Cosine" }
+          });
+        }
+      } catch (e: any) {
+        console.warn(`[AI Server] Qdrant initialization failed (Check env vars): ${e.message}`);
+      }
+    }
+  } catch (e: any) {
+    console.error(`[AI Server] Failed to init FastEmbed: ${e.message}`);
+  }
 
   // --- AI ENDPOINTS ---
   app.post("/api/ai/parse", async (req, res) => {
@@ -300,32 +334,81 @@ Strict Guardrails:
     res.json({ status: "ok", service: "TechConcierge-API" });
   });
 
-  // Generate Embeddings for Vector Search
+  // Generate Embeddings for Vector Search using local FastEmbed
   app.post("/api/ai/embed", async (req, res) => {
     try {
       const { text } = req.body;
       if (!text) return res.status(400).json({ error: "No text provided" });
 
-      let response;
-      try {
-        const primaryEmbedModel = process.env.GEMINI_MODEL_EMBEDDING!;
-        response = await ai.models.embedContent({
-          model: primaryEmbedModel,
-          contents: text,
-        });
-      } catch (err: any) {
-        const fallbackEmbedModel = process.env.GEMINI_MODEL_EMBEDDING_FALLBACK!;
-        console.warn(`[AI Server] Primary embedding failed, trying ${fallbackEmbedModel}`);
-        response = await ai.models.embedContent({
-          model: fallbackEmbedModel,
-          contents: text,
-        });
+      if (!embeddingModel) {
+         return res.status(500).json({ error: "Embedding model not initialized" });
       }
 
-      res.json({ embedding: response.embeddings[0].values });
+      const output = await embeddingModel(text, { pooling: 'mean', normalize: true });
+      const embedding = Array.from(output.data);
+      
+      res.json({ embedding });
     } catch (error: any) {
       console.error(`[AI Server] Embedding failed: ${error.message}`);
       res.status(500).json({ error: "Failed to generate embedding" });
+    }
+  });
+
+  // Qdrant Vector Search Endpoint
+  app.post("/api/kb/qdrant/search", async (req, res) => {
+    try {
+      const { embedding, os } = req.body;
+      if (!embedding) return res.status(400).json({ error: "No embedding provided" });
+      if (!process.env.QDRANT_URL) return res.status(500).json({ error: "Qdrant not configured" });
+
+      const collectionName = "brieftly_solutions";
+      const searchResult = await qdrantClient.search(collectionName, {
+        vector: embedding,
+        limit: 5,
+        filter: os && os !== 'unknown' ? {
+          must: [{ key: "os", match: { value: os } }]
+        } : undefined
+      });
+
+      res.json({ results: searchResult });
+    } catch (error: any) {
+      console.error(`[AI Server] Qdrant search failed: ${error.message}`);
+      res.status(500).json({ error: "Qdrant search failed" });
+    }
+  });
+
+  // Qdrant Vector Upsert Endpoint
+  app.post("/api/kb/qdrant/upsert", async (req, res) => {
+    try {
+      const { id, embedding, os, problemSummary } = req.body;
+      if (!id || !embedding) return res.status(400).json({ error: "id and embedding required" });
+      if (!process.env.QDRANT_URL) return res.status(500).json({ error: "Qdrant not configured" });
+
+      const collectionName = "brieftly_solutions";
+      
+      // Firestore IDs are usually 20 chars, Qdrant needs UUID. Map deterministically.
+      const hash = crypto.createHash('md5').update(id).digest('hex');
+      const uuid = `${hash.slice(0,8)}-${hash.slice(8,12)}-4${hash.slice(13,16)}-8${hash.slice(17,20)}-${hash.slice(20,32)}`;
+
+      await qdrantClient.upsert(collectionName, {
+        wait: true,
+        points: [
+          {
+            id: uuid,
+            vector: embedding,
+            payload: {
+              firestoreId: id,
+              os: os,
+              problemSummary: problemSummary
+            }
+          }
+        ]
+      });
+
+      res.json({ success: true, uuid });
+    } catch (error: any) {
+      console.error(`[AI Server] Qdrant upsert failed: ${error.message}`);
+      res.status(500).json({ error: "Qdrant upsert failed" });
     }
   });
 

@@ -1,64 +1,65 @@
-import { collection, query, where, getDocs, limit, doc, updateDoc, increment, serverTimestamp, addDoc, orderBy } from 'firebase/firestore';
+import { collection, query, where, getDocs, limit, doc, updateDoc, increment, serverTimestamp, addDoc, orderBy, getDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { AISolution, generateEmbedding } from './aiService';
 
-// Mathematical helper for Vector Search
-const cosineSimilarity = (A: number[], B: number[]) => {
-  let dotProduct = 0, normA = 0, normB = 0;
-  for (let i = 0; i < A.length; i++) {
-    dotProduct += A[i] * B[i];
-    normA += A[i] * A[i];
-    normB += B[i] * B[i];
-  }
-  return normA === 0 || normB === 0 ? 0 : dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
-};
-
 export const findKBMatch = async (intent: string, os: string) => {
-  const path = 'solutions';
   try {
-    const q = query(
-      collection(db, path),
-      where('os', '==', os),
-      limit(500)
-    );
-    const snapshot = await getDocs(q);
-    const results = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
-    
     // Generate Vector Embedding for the search intent
     const queryEmbedding = await generateEmbedding(intent);
     
     let bestMatch = null;
-    let highestScore = 0;
 
     if (queryEmbedding) {
-      // 1. Vector Search (Semantic)
-      for (const s of results) {
-        if (s.embedding) {
-          const score = cosineSimilarity(queryEmbedding, s.embedding);
-          if (score > highestScore) {
-            highestScore = score;
-            bestMatch = s;
+      // 1. Vector Search (Semantic) via Qdrant
+      try {
+        const res = await fetch("/api/kb/qdrant/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ embedding: queryEmbedding, os })
+        });
+        
+        if (res.ok) {
+          const data = await res.json();
+          if (data.results && data.results.length > 0) {
+            const topResult = data.results[0];
+            // Threshold for high-confidence Semantic Match
+            if (topResult.score > 0.85 && topResult.payload?.firestoreId) {
+              const docRef = doc(db, 'solutions', topResult.payload.firestoreId);
+              const docSnap = await getDoc(docRef);
+              if (docSnap.exists()) {
+                bestMatch = { id: docSnap.id, ...docSnap.data() as any };
+              }
+            }
           }
         }
-      }
-      
-      // Threshold for high-confidence Semantic Match
-      if (highestScore > 0.85) {
-        return bestMatch;
+      } catch (err) {
+        console.warn("[KB Search] Qdrant search request failed.", err);
       }
     }
 
-    // 2. Fallback to Keyword Match if Vector Search fails or no vectors exist
-    const intentWords = intent.toLowerCase().split(' ').filter(w => w.length > 3);
-    const match = results.find((s: any) => {
-      const summaryLower = s.problemSummary.toLowerCase();
-      if (summaryLower.includes(intent.toLowerCase()) || intent.toLowerCase().includes(summaryLower)) return true;
-      if (intentWords.length > 0) {
-        const matchCount = intentWords.filter(word => summaryLower.includes(word)).length;
-        if (matchCount / intentWords.length >= 0.6) return true;
-      }
-      return false;
-    });
+    let match = bestMatch;
+
+    // 2. Fallback to Keyword Match if Vector Search fails
+    if (!match) {
+      const q = query(
+        collection(db, 'solutions'),
+        where('os', '==', os),
+        limit(100)
+      );
+      const snapshot = await getDocs(q);
+      const results = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
+
+      const intentWords = intent.toLowerCase().split(' ').filter(w => w.length > 3);
+      match = results.find((s: any) => {
+        const summaryLower = s.problemSummary.toLowerCase();
+        if (summaryLower.includes(intent.toLowerCase()) || intent.toLowerCase().includes(summaryLower)) return true;
+        if (intentWords.length > 0) {
+          const matchCount = intentWords.filter(word => summaryLower.includes(word)).length;
+          if (matchCount / intentWords.length >= 0.6) return true;
+        }
+        return false;
+      });
+    }
 
     if (match) {
       // Fetch recent feedbacks for this solution to help AI refinement
@@ -147,6 +148,20 @@ export const submitFeedback = async (
       } else {
         const newSol = await addDoc(collection(db, 'solutions'), data);
         currentId = newSol.id;
+        
+        // Sync to Qdrant
+        if (embedding) {
+          fetch("/api/kb/qdrant/upsert", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: currentId,
+              embedding,
+              os: data.os,
+              problemSummary: data.problemSummary
+            })
+          }).catch(err => console.error("[Qdrant] Failed to upsert", err));
+        }
       }
     } else if (currentId && feedbackType === 'worked') {
       // Increment if it worked
