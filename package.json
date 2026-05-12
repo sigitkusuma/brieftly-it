@@ -36,8 +36,5 @@
     "typescript": "~5.8.2",
     "vite": "^6.2.3"
   },
-  "devDependencies": {},
-  "engines": {
-    "node": "20.x"
-  }
+  "devDependencies": {}
 }
