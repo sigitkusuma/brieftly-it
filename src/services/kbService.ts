@@ -132,7 +132,6 @@ export const submitFeedback = async (
       const data: any = {
         ...solutionData,
         os: solutionData.os.toLowerCase(), // Force consistency
-        embedding: embedding || null, // Store vector natively!
         validatedCount: feedbackType === 'worked' ? 1 : 0,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
