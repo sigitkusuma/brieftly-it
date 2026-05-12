@@ -78,6 +78,12 @@ async function startServer() {
           await qdrantClient.createCollection(collectionName, {
             vectors: { size: 384, distance: "Cosine" }
           });
+          console.log(`[AI Server] Creating keyword index on 'os' payload field...`);
+          await qdrantClient.createPayloadIndex(collectionName, {
+            field_name: "os",
+            field_schema: "keyword",
+            wait: true
+          });
         }
       } catch (e: any) {
         console.warn(`[AI Server] Qdrant initialization failed (Check env vars): ${e.message}`);
