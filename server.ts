@@ -373,7 +373,7 @@ Strict Guardrails:
       res.json({ results: searchResult });
     } catch (error: any) {
       console.error(`[AI Server] Qdrant search failed: ${error.message}`);
-      res.status(500).json({ error: "Qdrant search failed" });
+      res.status(500).json({ error: "Qdrant search failed", details: error.message, stack: error.stack });
     }
   });
 
@@ -408,7 +408,7 @@ Strict Guardrails:
       res.json({ success: true, uuid });
     } catch (error: any) {
       console.error(`[AI Server] Qdrant upsert failed: ${error.message}`);
-      res.status(500).json({ error: "Qdrant upsert failed" });
+      res.status(500).json({ error: "Qdrant upsert failed", details: error.message, stack: error.stack });
     }
   });
 
