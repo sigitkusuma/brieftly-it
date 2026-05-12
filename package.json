@@ -27,6 +27,8 @@
     "react-dom": "^19.0.1",
     "react-markdown": "^10.1.0",
     "tailwind-merge": "^3.5.0",
+    "tsx": "^4.21.0",
+    "typescript": "~5.8.2",
     "vite": "^6.2.3"
   },
   "devDependencies": {
@@ -34,9 +36,9 @@
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
     "firebase-admin": "^13.9.0",
-    "tailwindcss": "^4.1.14",
-    "tsx": "^4.21.0",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.3"
+    "tailwindcss": "^4.1.14"
+  },
+  "engines": {
+    "node": "22.x"
   }
 }
